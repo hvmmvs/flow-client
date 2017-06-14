@@ -4,7 +4,7 @@ from zipfile import ZipFile
 from StringIO import StringIO
 
 import requests
-
+import pandas as pd
 
 FLOW_URL = 'https://flow.polar.com'
 FLOW_LOGIN_URL = "{}/ajaxLogin".format(FLOW_URL)
@@ -92,6 +92,33 @@ class Activity(object):
                           dir(type(self)) +
                           list(self.__dict__)))
 
+    def _make_dataframe(self, content):
+        """
+        convert the csv response to a pandas dataframe
+        
+        returns
+        -------
+        df:     pandas dataframe of numeric data present in csv
+        header: dictionary of user details provided at the top of the csv
+        """
+        rows = content.split('\n')
+        header = {k: v for k, v in zip(rows[0].split(','), rows[1].split(','))}
+        columns = rows[2].split(',')
+        data = map(lambda x: x.split(','), rows[3:-1]) #last row is funky
+        return (pd.DataFrame(columns=columns, data=data), header)
+
+    def _grab_data(self, format, to_dataframe=False):
+        """grab tcx of csv data depending on what the user wants"""
+        logging.debug("Fetching " + format + " file for" + self.data['url'])
+        # tcx_url = FLOW_URL + self.data['url'] + '/export/tcx'
+        url = FLOW_URL + '/api/export/training/' + format + '/' + str(self.listItemId)
+
+        resp = self.session.get(url)
+        resp.raise_for_status()
+        if to_dataframe:
+            return self._make_dataframe(resp.content)
+        return resp.content
+
     def tcx(self):
         """Return the contents of the TCX file for the given activity.
 
@@ -99,19 +126,19 @@ class Activity(object):
         (as returned by `get_activities`).
 
         """
-        logging.debug("Fetching TCX file for %s", self.data['url'])
-        tcx_url = FLOW_URL + self.data['url'] + '/export/tcx'
+        return self._grab_data('tcx')
 
-        resp = self.session.get(tcx_url)
-        resp.raise_for_status()
-        with ZipFile(StringIO(resp.content), 'r') as tcx_zip:
-            namelist = tcx_zip.namelist()
-            assert len(namelist) == 1, "Expected only one item in zip"
-            tcx_name = tcx_zip.namelist()[0]
-            # FIXME: should this return something other than a raw string?
-            #   * parsed xml?
-            #   * Some custom TCX object?
-            return tcx_zip.read(tcx_name)
+    def csv(self):
+        """Return the contents of the CSV file for the given activity.
+
+        ``activity`` can either be an id or an activity dictionary
+        (as returned by `get_activities`).
+
+        """
+        return self._grab_data('csv')
+
+    def dataframe(self):
+        return self._grab_data('csv', to_dataframe=True)
 
 
 def _format_date(dt):
